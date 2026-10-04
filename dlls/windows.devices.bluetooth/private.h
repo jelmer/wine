@@ -28,6 +28,8 @@
 #include "winstring.h"
 #include "bthledef.h"
 
+#include "wine/list.h"
+
 #include "activation.h"
 #include "bthdef.h"
 #include "bthsdpdef.h"
@@ -36,6 +38,9 @@
 #define WIDL_using_Windows_Foundation
 #define WIDL_using_Windows_Foundation_Collections
 #include "windows.foundation.h"
+#define WIDL_using_Windows_Storage_Streams
+#include "windows.storage.streams.h"
+#include "robuffer.h"
 #define WIDL_using_Windows_Networking
 #include "windows.networking.connectivity.h"
 #include "windows.networking.h"
@@ -69,6 +74,34 @@ struct vector_iids
 HRESULT vector_create( const struct vector_iids *iids, void **out );
 
 HRESULT gatt_service_create( const BTH_LE_GATT_SERVICE *svc, IGattDeviceService **service );
+
+HRESULT event_handlers_append( struct list *list, IUnknown *handler, EventRegistrationToken *token );
+HRESULT event_handlers_remove( struct list *list, EventRegistrationToken *token );
+void event_handlers_notify( struct list *list, IInspectable *sender, IInspectable *args );
+void event_handlers_clear( struct list *list );
+
+HRESULT buffer_create( const BYTE *data, UINT32 size, IBuffer **out );
+HRESULT buffer_get_bytes( IBuffer *buffer, BYTE **data, UINT32 *size );
+HRESULT reference_create( const GUID *iid, const void *value, UINT32 size, IInspectable **out );
+HANDLE open_bluetooth_radio( DWORD flags );
+
+#define DEFINE_IINSPECTABLE_STUBS( pfx, iface_type, class_name )                                   \
+    static HRESULT WINAPI pfx##_GetIids( iface_type *iface, ULONG *iid_count, IID **iids )         \
+    {                                                                                              \
+        FIXME( "(%p, %p, %p): stub!\n", iface, iid_count, iids );                                  \
+        return E_NOTIMPL;                                                                          \
+    }                                                                                              \
+    static HRESULT WINAPI pfx##_GetRuntimeClassName( iface_type *iface, HSTRING *name )            \
+    {                                                                                              \
+        TRACE( "(%p, %p)\n", iface, name );                                                        \
+        return WindowsCreateString( class_name, wcslen( class_name ), name );                      \
+    }                                                                                              \
+    static HRESULT WINAPI pfx##_GetTrustLevel( iface_type *iface, TrustLevel *level )              \
+    {                                                                                              \
+        TRACE( "(%p, %p)\n", iface, level );                                                       \
+        *level = BaseTrust;                                                                        \
+        return S_OK;                                                                               \
+    }
 
 #define DEFINE_IINSPECTABLE_( pfx, iface_type, impl_type, impl_from, iface_mem, expr )             \
     static inline impl_type *impl_from( iface_type *iface )                                        \

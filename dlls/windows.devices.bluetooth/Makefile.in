@@ -8,6 +8,8 @@ SOURCES = \
 	bluetoothadapter.c \
 	bluetoothdevice.c \
 	classes.idl \
+	event_handlers.c \
 	gatt.c \
 	main.c \
+	util.c \
 	vector.c
