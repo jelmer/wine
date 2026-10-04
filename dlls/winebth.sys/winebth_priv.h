@@ -189,6 +189,13 @@ typedef UINT32 winebluetooth_device_props_mask_t;
      WINEBLUETOOTH_DEVICE_PROPERTY_ADV_FLAGS | WINEBLUETOOTH_DEVICE_PROPERTY_TX_POWER |          \
      WINEBLUETOOTH_DEVICE_PROPERTY_SERVICES_RESOLVED | WINEBLUETOOTH_DEVICE_PROPERTY_APPEARANCE)
 
+/* The properties that a BTH_DEVICE_INFO is made from. */
+#define WINEBLUETOOTH_DEVICE_INFO_PROPERTIES                                                \
+    (WINEBLUETOOTH_DEVICE_PROPERTY_NAME | WINEBLUETOOTH_DEVICE_PROPERTY_ADDRESS |           \
+     WINEBLUETOOTH_DEVICE_PROPERTY_CONNECTED | WINEBLUETOOTH_DEVICE_PROPERTY_PAIRED |       \
+     WINEBLUETOOTH_DEVICE_PROPERTY_LEGACY_PAIRING | WINEBLUETOOTH_DEVICE_PROPERTY_TRUSTED | \
+     WINEBLUETOOTH_DEVICE_PROPERTY_CLASS)
+
 /* Maximum size of each kind of advertising data kept for a remote device. */
 #define WINEBLUETOOTH_MAX_ADV_DATA_SIZE 256
 
@@ -284,7 +291,8 @@ static inline BOOL winebluetooth_device_equal( winebluetooth_device_t d1, winebl
 void winebluetooth_device_properties_to_info( winebluetooth_device_props_mask_t props_mask,
                                               const struct winebluetooth_device_properties *props,
                                               BTH_DEVICE_INFO *info );
-NTSTATUS winebluetooth_device_disconnect( winebluetooth_device_t device );
+NTSTATUS winebluetooth_device_disconnect( winebluetooth_device_t device, BOOL wait );
+NTSTATUS winebluetooth_device_connect_async( winebluetooth_device_t device, IRP *irp );
 
 NTSTATUS winebluetooth_auth_send_response( winebluetooth_device_t device, BLUETOOTH_AUTHENTICATION_METHOD method,
                                            UINT32 numeric_or_passkey, BOOL negative, BOOL *authenticated );
@@ -312,6 +320,10 @@ struct winebluetooth_gatt_characteristic_value
 void winebluetooth_gatt_characteristic_value_move( struct winebluetooth_gatt_characteristic_value *val, BYTE *dest );
 void winebluetooth_gatt_characteristic_value_free( struct winebluetooth_gatt_characteristic_value *val );
 NTSTATUS winebluetooth_gatt_characteristic_read_async( winebluetooth_gatt_characteristic_t chrc, IRP *irp );
+NTSTATUS winebluetooth_gatt_characteristic_write_async( winebluetooth_gatt_characteristic_t chrc, const BYTE *data,
+                                                        ULONG size, BOOL without_response, IRP *irp );
+NTSTATUS winebluetooth_gatt_characteristic_set_notify_async( winebluetooth_gatt_characteristic_t chrc, BOOL enable,
+                                                             IRP *irp );
 
 enum winebluetooth_watcher_event_type
 {
@@ -329,6 +341,7 @@ enum winebluetooth_watcher_event_type
     BLUETOOTH_WATCHER_EVENT_TYPE_GATT_CHARACTERISTIC_REMOVED,
     BLUETOOTH_WATCHER_EVENT_TYPE_GATT_CHARACTERISTIC_VALUE_CHANGED,
     BLUETOOTH_WATCHER_EVENT_TYPE_GATT_CHARACTERISTIC_VALUE_READ,
+    BLUETOOTH_WATCHER_EVENT_TYPE_REQUEST_FINISHED,
 };
 
 struct winebluetooth_watcher_event_radio_added
@@ -371,6 +384,13 @@ struct winebluetooth_watcher_event_device_removed
 };
 
 struct winebluetooth_watcher_event_pairing_finished
+{
+    IRP *irp;
+    NTSTATUS result;
+};
+
+/* The result of a request that doesn't return any data. */
+struct winebluetooth_watcher_event_request_finished
 {
     IRP *irp;
     NTSTATUS result;
@@ -431,6 +451,7 @@ union winebluetooth_watcher_event_data
     winebluetooth_gatt_characteristic_t gatt_characterisic_removed;
     struct winebluetooth_watcher_event_gatt_characteristic_value_changed gatt_characteristic_value_changed;
     struct winebluetooth_watcher_event_gatt_characteristic_value_read gatt_characteristic_value_read;
+    struct winebluetooth_watcher_event_request_finished request_finished;
 };
 
 struct winebluetooth_watcher_event

@@ -250,7 +250,7 @@ static NTSTATUS bluetooth_device_disconnect( void *args )
     struct bluetooth_device_disconnect_params *params = args;
 
     if (!dbus_connection) return STATUS_NOT_SUPPORTED;
-    return bluez_device_disconnect( dbus_connection, params->device->str );
+    return bluez_device_disconnect( dbus_connection, params->device->str, params->wait );
 }
 
 static NTSTATUS bluetooth_device_start_pairing( void *args )
@@ -259,6 +259,14 @@ static NTSTATUS bluetooth_device_start_pairing( void *args )
 
     if (!dbus_connection) return STATUS_NOT_SUPPORTED;
     return bluez_device_start_pairing( dbus_connection, bluetooth_watcher, params->device, params->irp );
+}
+
+static NTSTATUS bluetooth_device_connect( void *args )
+{
+    struct bluetooth_device_connect_params *params = args;
+
+    if (!dbus_connection) return STATUS_NOT_SUPPORTED;
+    return bluez_device_connect( dbus_connection, bluetooth_watcher, params->device, params->irp );
 }
 
 static NTSTATUS bluetooth_gatt_service_free( void *args )
@@ -280,6 +288,24 @@ static NTSTATUS bluetooth_gatt_characteristic_read( void *args )
     struct bluetooth_gatt_characteristic_read_params *params = args;
     if (!dbus_connection) return STATUS_NOT_SUPPORTED;
     return bluez_gatt_characteristic_read( dbus_connection, bluetooth_watcher, params->chrc, params->irp );
+}
+
+static NTSTATUS bluetooth_gatt_characteristic_write( void *args )
+{
+    struct bluetooth_gatt_characteristic_write_params *params = args;
+
+    if (!dbus_connection) return STATUS_NOT_SUPPORTED;
+    return bluez_gatt_characteristic_write( dbus_connection, bluetooth_watcher, params->chrc, params->data,
+                                            params->size, params->without_response, params->irp );
+}
+
+static NTSTATUS bluetooth_gatt_characteristic_set_notify( void *args )
+{
+    struct bluetooth_gatt_characteristic_set_notify_params *params = args;
+
+    if (!dbus_connection) return STATUS_NOT_SUPPORTED;
+    return bluez_gatt_characteristic_set_notify( dbus_connection, bluetooth_watcher, params->chrc, params->enable,
+                                                 params->irp );
 }
 
 static NTSTATUS bluetooth_gatt_characteristic_value_move( void *args )
@@ -323,6 +349,7 @@ const unixlib_entry_t __wine_unix_call_funcs[] = {
     bluetooth_device_dup,
     bluetooth_device_disconnect,
     bluetooth_device_start_pairing,
+    bluetooth_device_connect,
 
     bluetooth_auth_agent_enable_incoming,
     bluetooth_auth_send_response,
@@ -331,6 +358,8 @@ const unixlib_entry_t __wine_unix_call_funcs[] = {
 
     bluetooth_gatt_characteristic_free,
     bluetooth_gatt_characteristic_read,
+    bluetooth_gatt_characteristic_write,
+    bluetooth_gatt_characteristic_set_notify,
 
     bluetooth_gatt_characteristic_value_move,
     bluetooth_gatt_characteristic_value_free,

@@ -46,6 +46,18 @@
 /* Get all characteristics for a GATT service */
 #define IOCTL_WINEBTH_LE_DEVICE_GET_GATT_CHARACTERISTICS CTL_CODE(FILE_DEVICE_BLUETOOTH, 0xc1, METHOD_BUFFERED, FILE_ANY_ACCESS)
 
+/* Get the state of a LE device. */
+#define IOCTL_WINEBTH_LE_DEVICE_GET_INFO CTL_CODE(FILE_DEVICE_BLUETOOTH, 0xc2, METHOD_BUFFERED, FILE_ANY_ACCESS)
+/* Connect to a LE device. A connection made this way is dropped once all the handles that asked for it are closed. */
+#define IOCTL_WINEBTH_LE_DEVICE_CONNECT CTL_CODE(FILE_DEVICE_BLUETOOTH, 0xc3, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_WINEBTH_LE_DEVICE_DISCONNECT CTL_CODE(FILE_DEVICE_BLUETOOTH, 0xc4, METHOD_BUFFERED, FILE_ANY_ACCESS)
+/* Wait for the next connection change or characteristic notification on a LE device. */
+#define IOCTL_WINEBTH_LE_DEVICE_READ_EVENT CTL_CODE(FILE_DEVICE_BLUETOOTH, 0xc5, METHOD_BUFFERED, FILE_ANY_ACCESS)
+/* Read or write the value of a characteristic, or toggle notifications for it. */
+#define IOCTL_WINEBTH_LE_DEVICE_READ_CHARACTERISTIC CTL_CODE(FILE_DEVICE_BLUETOOTH, 0xc6, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_WINEBTH_LE_DEVICE_WRITE_CHARACTERISTIC CTL_CODE(FILE_DEVICE_BLUETOOTH, 0xc7, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_WINEBTH_LE_DEVICE_SET_NOTIFY CTL_CODE(FILE_DEVICE_BLUETOOTH, 0xc8, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
 /* Read the associated value for a GATT characteristic */
 #define IOCTL_WINEBTH_GATT_SERVICE_READ_CHARACTERISITIC_VALUE CTL_CODE(FILE_DEVICE_BLUETOOTH, 0xd0, METHOD_BUFFERED, FILE_ANY_ACCESS)
 
@@ -111,6 +123,46 @@ struct winebth_le_device_get_gatt_characteristics_params
     BTH_LE_GATT_SERVICE service;
     ULONG count;
     BTH_LE_GATT_CHARACTERISTIC characteristics[0];
+};
+
+struct winebth_le_device_info
+{
+    BTH_ADDR address;
+    unsigned int random_address : 1;
+    unsigned int connected : 1;
+    unsigned int services_resolved : 1;
+    unsigned int paired : 1;
+    UINT16 appearance;
+    CHAR name[BLUETOOTH_MAX_NAME_SIZE];
+};
+
+#define WINEBTH_LE_DEVICE_EVENT_CONNECTION_CHANGED 1
+#define WINEBTH_LE_DEVICE_EVENT_VALUE_CHANGED      2
+
+struct winebth_le_device_event
+{
+    ULONG type;
+    unsigned int connected : 1;
+    /* The attribute handle and new value of the characteristic, for WINEBTH_LE_DEVICE_EVENT_VALUE_CHANGED. */
+    UINT16 handle;
+    ULONG size;
+    BYTE buf[1];
+};
+
+/* Used to read and write characteristics. The characteristic is identified by its attribute handle. */
+struct winebth_le_device_characteristic_value_params
+{
+    UINT16 handle;
+    unsigned int from_device : 1;
+    unsigned int without_response : 1;
+    ULONG size;
+    BYTE buf[1];
+};
+
+struct winebth_le_device_set_notify_params
+{
+    UINT16 handle;
+    unsigned int enable : 1;
 };
 
 struct winebth_gatt_service_read_characterisitic_value_params

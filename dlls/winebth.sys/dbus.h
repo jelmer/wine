@@ -83,6 +83,7 @@
     DO_FUNC(dbus_message_is_method_call); \
     DO_FUNC(dbus_message_is_signal); \
     DO_FUNC(dbus_message_iter_append_basic); \
+    DO_FUNC(dbus_message_iter_append_fixed_array); \
     DO_FUNC(dbus_message_iter_abandon_container); \
     DO_FUNC(dbus_message_iter_abandon_container_if_open); \
     DO_FUNC(dbus_message_iter_close_container); \
@@ -101,6 +102,7 @@
     DO_FUNC(dbus_message_new_method_return); \
     DO_FUNC(dbus_message_new_method_call); \
     DO_FUNC(dbus_message_ref); \
+    DO_FUNC(dbus_message_set_no_reply); \
     DO_FUNC(dbus_message_unref); \
     DO_FUNC(dbus_pending_call_block); \
     DO_FUNC(dbus_pending_call_cancel); \

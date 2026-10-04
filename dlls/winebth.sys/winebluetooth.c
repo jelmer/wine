@@ -136,12 +136,13 @@ void winebluetooth_device_dup( winebluetooth_device_t device )
     UNIX_BLUETOOTH_CALL( bluetooth_device_dup, &args );
 }
 
-NTSTATUS winebluetooth_device_disconnect( winebluetooth_device_t device )
+NTSTATUS winebluetooth_device_disconnect( winebluetooth_device_t device, BOOL wait )
 {
     struct bluetooth_device_disconnect_params args = {0};
-    TRACE( "(%p)\n", (void *)device.handle );
+    TRACE( "(%p, %d)\n", (void *)device.handle, wait );
 
     args.device = device.handle;
+    args.wait = wait;
     return UNIX_BLUETOOTH_CALL( bluetooth_device_disconnect, &args );
 }
 
@@ -204,6 +205,17 @@ NTSTATUS winebluetooth_device_start_pairing( winebluetooth_device_t device, IRP 
     return UNIX_BLUETOOTH_CALL( bluetooth_device_start_pairing, &args );
 }
 
+NTSTATUS winebluetooth_device_connect_async( winebluetooth_device_t device, IRP *irp )
+{
+    struct bluetooth_device_connect_params args = {0};
+
+    TRACE( "(%p, %p)\n", (void *)device.handle, irp );
+
+    args.device = device.handle;
+    args.irp = irp;
+    return UNIX_BLUETOOTH_CALL( bluetooth_device_connect, &args );
+}
+
 void winebluetooth_gatt_service_free( winebluetooth_gatt_service_t service )
 {
     struct bluetooth_gatt_service_free_params args = {0};
@@ -232,6 +244,34 @@ NTSTATUS winebluetooth_gatt_characteristic_read_async( winebluetooth_gatt_charac
     params.chrc = chrc.handle;
     params.irp = irp;
     return UNIX_BLUETOOTH_CALL( bluetooth_gatt_characteristic_read, &params );
+}
+
+NTSTATUS winebluetooth_gatt_characteristic_write_async( winebluetooth_gatt_characteristic_t chrc, const BYTE *data,
+                                                        ULONG size, BOOL without_response, IRP *irp )
+{
+    struct bluetooth_gatt_characteristic_write_params params = {0};
+
+    TRACE( "(%p, %p, %lu, %d, %p)\n", (void *)chrc.handle, data, size, without_response, irp );
+
+    params.chrc = chrc.handle;
+    params.data = data;
+    params.size = size;
+    params.without_response = without_response;
+    params.irp = irp;
+    return UNIX_BLUETOOTH_CALL( bluetooth_gatt_characteristic_write, &params );
+}
+
+NTSTATUS winebluetooth_gatt_characteristic_set_notify_async( winebluetooth_gatt_characteristic_t chrc, BOOL enable,
+                                                             IRP *irp )
+{
+    struct bluetooth_gatt_characteristic_set_notify_params params = {0};
+
+    TRACE( "(%p, %d, %p)\n", (void *)chrc.handle, enable, irp );
+
+    params.chrc = chrc.handle;
+    params.enable = enable;
+    params.irp = irp;
+    return UNIX_BLUETOOTH_CALL( bluetooth_gatt_characteristic_set_notify, &params );
 }
 
 static const char *
