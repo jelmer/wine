@@ -380,6 +380,8 @@ struct async_inspectable
     IAsyncInfoImpl *IAsyncInfoImpl_inner;
     LONG ref;
     const GUID *iid;
+    /* Whether the result is a 32-bit value, such as an enum, instead of an object. */
+    BOOL value_result;
 };
 
 static inline struct async_inspectable *impl_from_IAsyncOperation_IInspectable( IAsyncOperation_IInspectable *iface )
@@ -475,7 +477,8 @@ static HRESULT WINAPI async_inspectable_GetResults( IAsyncOperation_IInspectable
 
     if (SUCCEEDED(hr = IAsyncInfoImpl_get_Result( impl->IAsyncInfoImpl_inner, &result )))
     {
-        if ((*results = (IInspectable *)result.punkVal)) IInspectable_AddRef( *results );
+        if (impl->value_result) *(INT32 *)results = result.lVal;
+        else if ((*results = (IInspectable *)result.punkVal)) IInspectable_AddRef( *results );
         PropVariantClear( &result );
     }
 
@@ -498,8 +501,8 @@ static const struct IAsyncOperation_IInspectableVtbl async_inspectable_vtbl =
     async_inspectable_GetResults,
 };
 
-HRESULT async_operation_inspectable_create( const GUID *iid, IUnknown *invoker, IUnknown *param, async_operation_callback callback,
-                                            IAsyncOperation_IInspectable **out )
+static HRESULT async_operation_create( const GUID *iid, IUnknown *invoker, IUnknown *param, async_operation_callback callback,
+                                       BOOL value_result, IAsyncOperation_IInspectable **out )
 {
     struct async_inspectable *impl;
     HRESULT hr;
@@ -509,6 +512,7 @@ HRESULT async_operation_inspectable_create( const GUID *iid, IUnknown *invoker, 
     impl->IAsyncOperation_IInspectable_iface.lpVtbl = &async_inspectable_vtbl;
     impl->ref = 1;
     impl->iid = iid;
+    impl->value_result = value_result;
 
     if (FAILED(hr = async_info_create( invoker, param, callback, (IInspectable *)&impl->IAsyncOperation_IInspectable_iface, &impl->IAsyncInfoImpl_inner )) ||
         FAILED(hr = IAsyncInfoImpl_Start( impl->IAsyncInfoImpl_inner )))
@@ -521,6 +525,19 @@ HRESULT async_operation_inspectable_create( const GUID *iid, IUnknown *invoker, 
     *out = &impl->IAsyncOperation_IInspectable_iface;
     TRACE( "created IAsyncOperation_IInspectable %p\n", *out );
     return S_OK;
+}
+
+HRESULT async_operation_inspectable_create( const GUID *iid, IUnknown *invoker, IUnknown *param, async_operation_callback callback,
+                                            IAsyncOperation_IInspectable **out )
+{
+    return async_operation_create( iid, invoker, param, callback, FALSE, out );
+}
+
+/* Create an operation whose callback returns a VT_I4 result, for IAsyncOperation<T> with T an enum. */
+HRESULT async_operation_value_create( const GUID *iid, IUnknown *invoker, IUnknown *param, async_operation_callback callback,
+                                      IAsyncOperation_IInspectable **out )
+{
+    return async_operation_create( iid, invoker, param, callback, TRUE, out );
 }
 
 struct async_action

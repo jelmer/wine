@@ -34,6 +34,8 @@
 #include "bthdef.h"
 #include "bthsdpdef.h"
 #include "bluetoothapis.h"
+#include "winioctl.h"
+#include "wine/winebth.h"
 
 #define WIDL_using_Windows_Foundation
 #define WIDL_using_Windows_Foundation_Collections
@@ -41,6 +43,8 @@
 #define WIDL_using_Windows_Storage_Streams
 #include "windows.storage.streams.h"
 #include "robuffer.h"
+#define WIDL_using_Windows_Devices_Enumeration
+#include "windows.devices.enumeration.h"
 #define WIDL_using_Windows_Networking
 #include "windows.networking.connectivity.h"
 #include "windows.networking.h"
@@ -73,7 +77,46 @@ struct vector_iids
 };
 HRESULT vector_create( const struct vector_iids *iids, void **out );
 
-HRESULT gatt_service_create( const BTH_LE_GATT_SERVICE *svc, IGattDeviceService **service );
+HRESULT async_operation_value_create( const GUID *iid, IUnknown *invoker, IUnknown *param,
+                                      async_operation_callback callback, IAsyncOperation_IInspectable **out );
+
+struct ble_device
+{
+    IBluetoothLEDevice IBluetoothLEDevice_iface;
+    IBluetoothLEDevice3 IBluetoothLEDevice3_iface;
+    IBluetoothLEDevice4 IBluetoothLEDevice4_iface;
+    IClosable IClosable_iface;
+    LONG ref;
+
+    HSTRING id;
+    UINT64 addr;
+
+    CRITICAL_SECTION cs;
+    HANDLE device;       /* Used for requests, which block until they complete. Guarded by cs. */
+    HANDLE event_device; /* Used by the event thread to wait for events. */
+    HANDLE event_thread;
+    DWORD event_thread_id;
+    HANDLE stop_event;
+    BOOL detached;       /* Whether the event thread is the one that released the last reference. */
+
+    struct list characteristics; /* struct gatt_characteristic, for value change events. Guarded by cs. */
+    struct list name_handlers;
+    struct list services_handlers;
+    struct list connection_handlers;
+};
+
+/* Send a request to the device and wait for its result. */
+BOOL ble_device_ioctl( struct ble_device *device, DWORD code, void *in, DWORD in_size, void *out, DWORD out_size,
+                       DWORD *ret_size );
+HRESULT ble_device_get_info( struct ble_device *device, struct winebth_le_device_info *info );
+HRESULT ble_device_connect( struct ble_device *device );
+HRESULT ble_device_get_gatt_services( struct ble_device *device, const GUID *uuid,
+                                      IVectorView_GattDeviceService **services );
+void gatt_characteristics_value_changed( struct ble_device *device, UINT16 handle, const BYTE *data, UINT32 size );
+
+HRESULT gatt_service_create( struct ble_device *device, const BTH_LE_GATT_SERVICE *svc, IGattDeviceService **service );
+HRESULT gatt_services_result_create( GattCommunicationStatus status, IVectorView_GattDeviceService *services,
+                                     IGattDeviceServicesResult **out );
 
 HRESULT event_handlers_append( struct list *list, IUnknown *handler, EventRegistrationToken *token );
 HRESULT event_handlers_remove( struct list *list, EventRegistrationToken *token );
