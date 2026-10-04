@@ -1020,11 +1020,13 @@ static HRESULT cccd_result_create( GattClientCharacteristicConfigurationDescript
 struct gatt_characteristic
 {
     IGattCharacteristic IGattCharacteristic_iface;
+    IGattCharacteristic2 IGattCharacteristic2_iface;
     IGattCharacteristic3 IGattCharacteristic3_iface;
     LONG ref;
 
     struct list entry; /* In ble_device.characteristics. */
     struct ble_device *device;
+    IGattDeviceService *service;
     BTH_LE_GATT_CHARACTERISTIC props;
     /* BlueZ doesn't expose the descriptor, so remember what was last written to it. */
     GattClientCharacteristicConfigurationDescriptorValue cccd;
@@ -1048,6 +1050,11 @@ static HRESULT WINAPI gatt_characteristic_QueryInterface( IGattCharacteristic *i
         IsEqualGUID( iid, &IID_IGattCharacteristic ))
     {
         IGattCharacteristic_AddRef(( *out = &impl->IGattCharacteristic_iface ));
+        return S_OK;
+    }
+    if (IsEqualGUID( iid, &IID_IGattCharacteristic2 ))
+    {
+        IGattCharacteristic2_AddRef(( *out = &impl->IGattCharacteristic2_iface ));
         return S_OK;
     }
     if (IsEqualGUID( iid, &IID_IGattCharacteristic3 ))
@@ -1082,6 +1089,7 @@ static ULONG WINAPI gatt_characteristic_Release( IGattCharacteristic *iface )
         list_remove( &impl->entry );
         LeaveCriticalSection( &impl->device->cs );
         event_handlers_clear( &impl->value_handlers );
+        IGattDeviceService_Release( impl->service );
         IBluetoothLEDevice_Release( &impl->device->IBluetoothLEDevice_iface );
         free( impl );
     }
@@ -1090,12 +1098,17 @@ static ULONG WINAPI gatt_characteristic_Release( IGattCharacteristic *iface )
 
 DEFINE_IINSPECTABLE_STUBS( gatt_characteristic, IGattCharacteristic, RuntimeClass_Windows_Devices_Bluetooth_GenericAttributeProfile_GattCharacteristic )
 
+static HRESULT gatt_characteristic_get_descriptors( struct gatt_characteristic *impl, const GUID *uuid,
+                                                    IVectorView_GattDescriptor **view );
+
 static HRESULT WINAPI gatt_characteristic_GetDescriptors( IGattCharacteristic *iface, GUID uuid, IVectorView_GattDescriptor **value )
 {
-    FIXME( "(%p, %s, %p): semi-stub!\n", iface, debugstr_guid( &uuid ), value );
+    struct gatt_characteristic *impl = impl_from_IGattCharacteristic( iface );
+
+    TRACE( "(%p, %s, %p)\n", iface, debugstr_guid( &uuid ), value );
 
     if (!value) return E_POINTER;
-    return empty_view_create( &descriptor_vector_iids, (void **)value );
+    return gatt_characteristic_get_descriptors( impl, &uuid, value );
 }
 
 static HRESULT WINAPI gatt_characteristic_get_CharacteristicProperties( IGattCharacteristic *iface, GattCharacteristicProperties *value )
@@ -1376,6 +1389,267 @@ static HRESULT WINAPI gatt_characteristic_remove_ValueChanged( IGattCharacterist
     return event_handlers_remove( &impl->value_handlers, &token );
 }
 
+/* The client characteristic configuration descriptor of a characteristic. BlueZ doesn't expose it and
+ * manages its value itself, so reads and writes of it are emulated. */
+struct gatt_descriptor
+{
+    IGattDescriptor IGattDescriptor_iface;
+    IGattDescriptor2 IGattDescriptor2_iface;
+    LONG ref;
+
+    struct gatt_characteristic *characteristic;
+};
+
+static const GUID cccd_uuid = { 0x2902, 0, 0x1000, { 0x80, 0x00, 0x00, 0x80, 0x5f, 0x9b, 0x34, 0xfb } };
+
+static inline struct gatt_descriptor *impl_from_IGattDescriptor( IGattDescriptor *iface )
+{
+    return CONTAINING_RECORD( iface, struct gatt_descriptor, IGattDescriptor_iface );
+}
+
+static HRESULT WINAPI gatt_descriptor_QueryInterface( IGattDescriptor *iface, REFIID iid, void **out )
+{
+    struct gatt_descriptor *impl = impl_from_IGattDescriptor( iface );
+
+    TRACE( "(%p, %s, %p)\n", iface, debugstr_guid( iid ), out );
+
+    if (IsEqualGUID( iid, &IID_IUnknown ) ||
+        IsEqualGUID( iid, &IID_IInspectable ) ||
+        IsEqualGUID( iid, &IID_IAgileObject ) ||
+        IsEqualGUID( iid, &IID_IGattDescriptor ))
+    {
+        IGattDescriptor_AddRef(( *out = &impl->IGattDescriptor_iface ));
+        return S_OK;
+    }
+    if (IsEqualGUID( iid, &IID_IGattDescriptor2 ))
+    {
+        IGattDescriptor2_AddRef(( *out = &impl->IGattDescriptor2_iface ));
+        return S_OK;
+    }
+
+    *out = NULL;
+    FIXME( "%s not implemented, returning E_NOINTERFACE.\n", debugstr_guid( iid ) );
+    return E_NOINTERFACE;
+}
+
+static ULONG WINAPI gatt_descriptor_AddRef( IGattDescriptor *iface )
+{
+    struct gatt_descriptor *impl = impl_from_IGattDescriptor( iface );
+    ULONG ref = InterlockedIncrement( &impl->ref );
+    TRACE( "(%p) ref %lu\n", iface, ref );
+    return ref;
+}
+
+static ULONG WINAPI gatt_descriptor_Release( IGattDescriptor *iface )
+{
+    struct gatt_descriptor *impl = impl_from_IGattDescriptor( iface );
+    ULONG ref = InterlockedDecrement( &impl->ref );
+
+    TRACE( "(%p) ref %lu\n", iface, ref );
+
+    if (!ref)
+    {
+        IGattCharacteristic_Release( &impl->characteristic->IGattCharacteristic_iface );
+        free( impl );
+    }
+    return ref;
+}
+
+DEFINE_IINSPECTABLE_STUBS( gatt_descriptor, IGattDescriptor, RuntimeClass_Windows_Devices_Bluetooth_GenericAttributeProfile_GattDescriptor )
+
+static HRESULT WINAPI gatt_descriptor_get_ProtectionLevel( IGattDescriptor *iface, GattProtectionLevel *value )
+{
+    TRACE( "(%p, %p)\n", iface, value );
+
+    if (!value) return E_POINTER;
+    *value = GattProtectionLevel_Plain;
+    return S_OK;
+}
+
+static HRESULT WINAPI gatt_descriptor_put_ProtectionLevel( IGattDescriptor *iface, GattProtectionLevel value )
+{
+    FIXME( "(%p, %d): stub!\n", iface, value );
+    return S_OK;
+}
+
+static HRESULT WINAPI gatt_descriptor_get_Uuid( IGattDescriptor *iface, GUID *value )
+{
+    TRACE( "(%p, %p)\n", iface, value );
+
+    if (!value) return E_POINTER;
+    *value = cccd_uuid;
+    return S_OK;
+}
+
+static HRESULT WINAPI gatt_descriptor_get_AttributeHandle( IGattDescriptor *iface, UINT16 *value )
+{
+    struct gatt_descriptor *impl = impl_from_IGattDescriptor( iface );
+
+    TRACE( "(%p, %p)\n", iface, value );
+
+    if (!value) return E_POINTER;
+    /* The descriptor normally follows the declaration and the value of its characteristic. */
+    *value = impl->characteristic->props.AttributeHandle + 2;
+    return S_OK;
+}
+
+static HRESULT gatt_descriptor_read_async( IUnknown *invoker, IUnknown *param, PROPVARIANT *result, BOOL called_async )
+{
+    struct gatt_descriptor *impl = impl_from_IGattDescriptor( (IGattDescriptor *)invoker );
+    IGattReadResult *read_result;
+    IBuffer *data;
+    BYTE value[2];
+    HRESULT hr;
+
+    if (!called_async) return STATUS_PENDING;
+
+    value[0] = impl->characteristic->cccd;
+    value[1] = 0;
+    if (FAILED(hr = buffer_create( value, sizeof( value ), &data ))) return hr;
+    if (FAILED(hr = read_result_create( GattCommunicationStatus_Success, data, &read_result ))) return hr;
+    result->vt = VT_UNKNOWN;
+    result->punkVal = (IUnknown *)read_result;
+    return S_OK;
+}
+
+static HRESULT WINAPI gatt_descriptor_ReadValueWithCacheModeAsync( IGattDescriptor *iface, BluetoothCacheMode mode,
+                                                                   IAsyncOperation_GattReadResult **async )
+{
+    TRACE( "(%p, %d, %p)\n", iface, mode, async );
+
+    if (!async) return E_POINTER;
+    return async_operation_start( &IID_IAsyncOperation_GattReadResult, iface, async_params_create( NULL, mode ),
+                                  gatt_descriptor_read_async, FALSE, async );
+}
+
+static HRESULT WINAPI gatt_descriptor_ReadValueAsync( IGattDescriptor *iface, IAsyncOperation_GattReadResult **async )
+{
+    return gatt_descriptor_ReadValueWithCacheModeAsync( iface, BluetoothCacheMode_Cached, async );
+}
+
+static GattCommunicationStatus gatt_descriptor_write( struct gatt_descriptor *impl, struct async_params *params )
+{
+    UINT32 size;
+    BYTE *data;
+
+    if (FAILED(buffer_get_bytes( params->buffer, &data, &size )) || !size) return GattCommunicationStatus_ProtocolError;
+    params->cccd = data[0] & 3;
+    return gatt_characteristic_write_cccd( impl->characteristic, params );
+}
+
+static HRESULT gatt_descriptor_write_async( IUnknown *invoker, IUnknown *param, PROPVARIANT *result, BOOL called_async )
+{
+    struct gatt_descriptor *impl = impl_from_IGattDescriptor( (IGattDescriptor *)invoker );
+
+    if (!called_async) return STATUS_PENDING;
+    result->vt = VT_I4;
+    result->lVal = gatt_descriptor_write( impl, impl_from_IUnknown( param ) );
+    return S_OK;
+}
+
+static HRESULT gatt_descriptor_write_result_async( IUnknown *invoker, IUnknown *param, PROPVARIANT *result, BOOL called_async )
+{
+    struct gatt_descriptor *impl = impl_from_IGattDescriptor( (IGattDescriptor *)invoker );
+    IGattWriteResult *write_result;
+    HRESULT hr;
+
+    if (!called_async) return STATUS_PENDING;
+    if (FAILED(hr = write_result_create( gatt_descriptor_write( impl, impl_from_IUnknown( param ) ), &write_result )))
+        return hr;
+    result->vt = VT_UNKNOWN;
+    result->punkVal = (IUnknown *)write_result;
+    return S_OK;
+}
+
+static HRESULT WINAPI gatt_descriptor_WriteValueAsync( IGattDescriptor *iface, IBuffer *value,
+                                                       IAsyncOperation_GattCommunicationStatus **async )
+{
+    TRACE( "(%p, %p, %p)\n", iface, value, async );
+
+    if (!value || !async) return E_POINTER;
+    return async_operation_start( &IID_IAsyncOperation_GattCommunicationStatus, iface,
+                                  write_params_create( value, GattWriteOption_WriteWithResponse ),
+                                  gatt_descriptor_write_async, TRUE, async );
+}
+
+static const IGattDescriptorVtbl gatt_descriptor_vtbl =
+{
+    /* IUnknown */
+    gatt_descriptor_QueryInterface,
+    gatt_descriptor_AddRef,
+    gatt_descriptor_Release,
+    /* IInspectable */
+    gatt_descriptor_GetIids,
+    gatt_descriptor_GetRuntimeClassName,
+    gatt_descriptor_GetTrustLevel,
+    /* IGattDescriptor */
+    gatt_descriptor_get_ProtectionLevel,
+    gatt_descriptor_put_ProtectionLevel,
+    gatt_descriptor_get_Uuid,
+    gatt_descriptor_get_AttributeHandle,
+    gatt_descriptor_ReadValueAsync,
+    gatt_descriptor_ReadValueWithCacheModeAsync,
+    gatt_descriptor_WriteValueAsync,
+};
+
+DEFINE_IINSPECTABLE( gatt_descriptor2, IGattDescriptor2, struct gatt_descriptor, IGattDescriptor_iface )
+
+static HRESULT WINAPI gatt_descriptor2_WriteValueWithResultAsync( IGattDescriptor2 *iface, IBuffer *value,
+                                                                  IAsyncOperation_GattWriteResult **async )
+{
+    struct gatt_descriptor *impl = impl_from_IGattDescriptor2( iface );
+
+    TRACE( "(%p, %p, %p)\n", iface, value, async );
+
+    if (!value || !async) return E_POINTER;
+    return async_operation_start( &IID_IAsyncOperation_GattWriteResult, &impl->IGattDescriptor_iface,
+                                  write_params_create( value, GattWriteOption_WriteWithResponse ),
+                                  gatt_descriptor_write_result_async, FALSE, async );
+}
+
+static const IGattDescriptor2Vtbl gatt_descriptor2_vtbl =
+{
+    /* IUnknown */
+    gatt_descriptor2_QueryInterface,
+    gatt_descriptor2_AddRef,
+    gatt_descriptor2_Release,
+    /* IInspectable */
+    gatt_descriptor2_GetIids,
+    gatt_descriptor2_GetRuntimeClassName,
+    gatt_descriptor2_GetTrustLevel,
+    /* IGattDescriptor2 */
+    gatt_descriptor2_WriteValueWithResultAsync,
+};
+
+/* Get the descriptors of the characteristic, optionally only those with the given UUID. */
+static HRESULT gatt_characteristic_get_descriptors( struct gatt_characteristic *impl, const GUID *uuid,
+                                                    IVectorView_GattDescriptor **view )
+{
+    IVector_IInspectable *vector;
+    struct gatt_descriptor *desc;
+    HRESULT hr;
+
+    /* TODO: BlueZ exposes the other descriptors as GattDescriptor1 objects. */
+    if (FAILED(hr = vector_create( &descriptor_vector_iids, (void **)&vector ))) return hr;
+    if ((impl->props.IsNotifiable || impl->props.IsIndicatable) && (!uuid || IsEqualGUID( uuid, &cccd_uuid )))
+    {
+        if (!(desc = calloc( 1, sizeof( *desc ) )))
+        {
+            IVector_IInspectable_Release( vector );
+            return E_OUTOFMEMORY;
+        }
+        desc->IGattDescriptor_iface.lpVtbl = &gatt_descriptor_vtbl;
+        desc->IGattDescriptor2_iface.lpVtbl = &gatt_descriptor2_vtbl;
+        desc->ref = 1;
+        IGattCharacteristic_AddRef( &(desc->characteristic = impl)->IGattCharacteristic_iface );
+        hr = IVector_IInspectable_Append( vector, (IInspectable *)&desc->IGattDescriptor_iface );
+        IGattDescriptor_Release( &desc->IGattDescriptor_iface );
+    }
+    if (SUCCEEDED(hr)) hr = IVector_IInspectable_GetView( vector, (IVectorView_IInspectable **)view );
+    IVector_IInspectable_Release( vector );
+    return hr;
+}
+
 static const IGattCharacteristicVtbl gatt_characteristic_vtbl =
 {
     /* IUnknown */
@@ -1405,47 +1679,100 @@ static const IGattCharacteristicVtbl gatt_characteristic_vtbl =
     gatt_characteristic_remove_ValueChanged,
 };
 
+DEFINE_IINSPECTABLE( gatt_characteristic2, IGattCharacteristic2, struct gatt_characteristic, IGattCharacteristic_iface )
+
+static HRESULT WINAPI gatt_characteristic2_get_Service( IGattCharacteristic2 *iface, IGattDeviceService **value )
+{
+    struct gatt_characteristic *impl = impl_from_IGattCharacteristic2( iface );
+
+    TRACE( "(%p, %p)\n", iface, value );
+
+    if (!value) return E_POINTER;
+    IGattDeviceService_AddRef(( *value = impl->service ));
+    return S_OK;
+}
+
+static HRESULT WINAPI gatt_characteristic2_GetAllDescriptors( IGattCharacteristic2 *iface, IVectorView_GattDescriptor **descriptors )
+{
+    struct gatt_characteristic *impl = impl_from_IGattCharacteristic2( iface );
+
+    TRACE( "(%p, %p)\n", iface, descriptors );
+
+    if (!descriptors) return E_POINTER;
+    return gatt_characteristic_get_descriptors( impl, NULL, descriptors );
+}
+
+static const IGattCharacteristic2Vtbl gatt_characteristic2_vtbl =
+{
+    /* IUnknown */
+    gatt_characteristic2_QueryInterface,
+    gatt_characteristic2_AddRef,
+    gatt_characteristic2_Release,
+    /* IInspectable */
+    gatt_characteristic2_GetIids,
+    gatt_characteristic2_GetRuntimeClassName,
+    gatt_characteristic2_GetTrustLevel,
+    /* IGattCharacteristic2 */
+    gatt_characteristic2_get_Service,
+    gatt_characteristic2_GetAllDescriptors,
+};
+
 DEFINE_IINSPECTABLE( gatt_characteristic3, IGattCharacteristic3, struct gatt_characteristic, IGattCharacteristic_iface )
 
 static HRESULT gatt_characteristic_get_descriptors_async( IUnknown *invoker, IUnknown *param, PROPVARIANT *result, BOOL called_async )
 {
+    struct gatt_characteristic *impl = impl_from_IGattCharacteristic( (IGattCharacteristic *)invoker );
+    GattCommunicationStatus status = GattCommunicationStatus_Success;
+    struct async_params *params = impl_from_IUnknown( param );
     IGattDescriptorsResult *descriptors_result;
+    IVectorView_GattDescriptor *view = NULL;
     HRESULT hr;
 
     if (!called_async) return STATUS_PENDING;
-    /* TODO: BlueZ exposes descriptors, other than the client configuration one, as GattDescriptor1 objects. */
-    if (FAILED(hr = descriptors_result_create( GattCommunicationStatus_Success, NULL, &descriptors_result ))) return hr;
+    if (FAILED(gatt_characteristic_get_descriptors( impl, params->has_uuid ? &params->uuid : NULL, &view )))
+        status = GattCommunicationStatus_Unreachable;
+    if (FAILED(hr = descriptors_result_create( status, view, &descriptors_result ))) return hr;
     result->vt = VT_UNKNOWN;
     result->punkVal = (IUnknown *)descriptors_result;
     return S_OK;
+}
+
+static HRESULT gatt_characteristic_get_descriptors_start( IGattCharacteristic3 *iface, const GUID *uuid, BluetoothCacheMode mode,
+                                                          IAsyncOperation_GattDescriptorsResult **async )
+{
+    struct gatt_characteristic *impl = impl_from_IGattCharacteristic3( iface );
+
+    if (!async) return E_POINTER;
+    return async_operation_start( &IID_IAsyncOperation_GattDescriptorsResult, &impl->IGattCharacteristic_iface,
+                                  async_params_create( uuid, mode ), gatt_characteristic_get_descriptors_async, FALSE, async );
+}
+
+static HRESULT WINAPI gatt_characteristic3_GetDescriptorsAsync( IGattCharacteristic3 *iface, IAsyncOperation_GattDescriptorsResult **async )
+{
+    TRACE( "(%p, %p)\n", iface, async );
+    return gatt_characteristic_get_descriptors_start( iface, NULL, BluetoothCacheMode_Cached, async );
+}
+
+static HRESULT WINAPI gatt_characteristic3_GetDescriptorsWithCacheModeAsync( IGattCharacteristic3 *iface, BluetoothCacheMode mode,
+                                                                             IAsyncOperation_GattDescriptorsResult **async )
+{
+    TRACE( "(%p, %d, %p)\n", iface, mode, async );
+    return gatt_characteristic_get_descriptors_start( iface, NULL, mode, async );
+}
+
+static HRESULT WINAPI gatt_characteristic3_GetDescriptorsForUuidAsync( IGattCharacteristic3 *iface, GUID uuid,
+                                                                       IAsyncOperation_GattDescriptorsResult **async )
+{
+    TRACE( "(%p, %s, %p)\n", iface, debugstr_guid( &uuid ), async );
+    return gatt_characteristic_get_descriptors_start( iface, &uuid, BluetoothCacheMode_Cached, async );
 }
 
 static HRESULT WINAPI gatt_characteristic3_GetDescriptorsForUuidWithCacheModeAsync( IGattCharacteristic3 *iface, GUID uuid,
                                                                                     BluetoothCacheMode mode,
                                                                                     IAsyncOperation_GattDescriptorsResult **async )
 {
-    FIXME( "(%p, %s, %d, %p): semi-stub!\n", iface, debugstr_guid( &uuid ), mode, async );
-
-    if (!async) return E_POINTER;
-    return async_operation_start( &IID_IAsyncOperation_GattDescriptorsResult, iface, async_params_create( &uuid, mode ),
-                                  gatt_characteristic_get_descriptors_async, FALSE, async );
-}
-
-static HRESULT WINAPI gatt_characteristic3_GetDescriptorsAsync( IGattCharacteristic3 *iface, IAsyncOperation_GattDescriptorsResult **async )
-{
-    return gatt_characteristic3_GetDescriptorsForUuidWithCacheModeAsync( iface, null_uuid, BluetoothCacheMode_Cached, async );
-}
-
-static HRESULT WINAPI gatt_characteristic3_GetDescriptorsWithCacheModeAsync( IGattCharacteristic3 *iface, BluetoothCacheMode mode,
-                                                                             IAsyncOperation_GattDescriptorsResult **async )
-{
-    return gatt_characteristic3_GetDescriptorsForUuidWithCacheModeAsync( iface, null_uuid, mode, async );
-}
-
-static HRESULT WINAPI gatt_characteristic3_GetDescriptorsForUuidAsync( IGattCharacteristic3 *iface, GUID uuid,
-                                                                       IAsyncOperation_GattDescriptorsResult **async )
-{
-    return gatt_characteristic3_GetDescriptorsForUuidWithCacheModeAsync( iface, uuid, BluetoothCacheMode_Cached, async );
+    TRACE( "(%p, %s, %d, %p)\n", iface, debugstr_guid( &uuid ), mode, async );
+    return gatt_characteristic_get_descriptors_start( iface, &uuid, mode, async );
 }
 
 static HRESULT WINAPI gatt_characteristic3_WriteValueWithResultAndOptionAsync( IGattCharacteristic3 *iface, IBuffer *value,
@@ -1500,17 +1827,19 @@ static const IGattCharacteristic3Vtbl gatt_characteristic3_vtbl =
     gatt_characteristic3_WriteClientCharacteristicConfigurationDescriptorWithResultAsync,
 };
 
-static HRESULT gatt_characteristic_create( struct ble_device *device, const BTH_LE_GATT_CHARACTERISTIC *props,
-                                           IGattCharacteristic **out )
+static HRESULT gatt_characteristic_create( struct ble_device *device, IGattDeviceService *service,
+                                           const BTH_LE_GATT_CHARACTERISTIC *props, IGattCharacteristic **out )
 {
     struct gatt_characteristic *impl;
 
     if (!(impl = calloc( 1, sizeof( *impl ) ))) return E_OUTOFMEMORY;
     impl->IGattCharacteristic_iface.lpVtbl = &gatt_characteristic_vtbl;
+    impl->IGattCharacteristic2_iface.lpVtbl = &gatt_characteristic2_vtbl;
     impl->IGattCharacteristic3_iface.lpVtbl = &gatt_characteristic3_vtbl;
     impl->ref = 1;
     impl->props = *props;
     list_init( &impl->value_handlers );
+    IGattDeviceService_AddRef(( impl->service = service ));
     IBluetoothLEDevice_AddRef( &(impl->device = device)->IBluetoothLEDevice_iface );
     EnterCriticalSection( &device->cs );
     list_add_tail( &device->characteristics, &impl->entry );
@@ -1669,7 +1998,9 @@ static HRESULT gatt_service_get_characteristics( struct gatt_service *impl, cons
 
         le_uuid_to_guid( &params->characteristics[i].CharacteristicUuid, &char_uuid );
         if (uuid && !IsEqualGUID( uuid, &char_uuid )) continue;
-        if (FAILED(hr = gatt_characteristic_create( impl->device, &params->characteristics[i], &characteristic ))) break;
+        if (FAILED(hr = gatt_characteristic_create( impl->device, &impl->IGattDeviceService_iface,
+                                                    &params->characteristics[i], &characteristic )))
+            break;
         hr = IVector_IInspectable_Append( vector, (IInspectable *)characteristic );
         IGattCharacteristic_Release( characteristic );
     }
