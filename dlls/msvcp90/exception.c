@@ -1242,6 +1242,29 @@ void __cdecl _Throw_C_error(int code)
     _CxxThrowException(&se, &system_error_exception_type);
 }
 
+/* ?_Throw_Cpp_error@std@@YAXH@Z */
+void __cdecl _Throw_Cpp_error(int code)
+{
+    static const errno_t errors[] =
+    {
+        EBUSY, EINVAL, ESRCH, ENOMEM, EPERM, EDEADLK, EAGAIN
+    };
+    system_error se;
+    const char *msg;
+
+    TRACE("(%d)\n", code);
+
+    if (code < 0 || code >= ARRAY_SIZE(errors)) abort();
+
+    msg = strerror(errors[code]);
+    MSVCP_runtime_error_ctor(&se.base, &msg);
+    se.code.code = errors[code];
+    se.code.category = std_generic_category();
+    se.base.e.vtable = &system_error_vtable;
+
+    _CxxThrowException(&se, &system_error_exception_type);
+}
+
 /* compute the this pointer for a base class of a given type */
 static inline void *get_this_pointer( const this_ptr_offsets *off, void *object )
 {
