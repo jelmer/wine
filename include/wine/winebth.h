@@ -35,6 +35,11 @@
 /* Initiate the authentication procedure with a remote device. */
 #define IOCTL_WINEBTH_RADIO_START_AUTH         CTL_CODE(FILE_DEVICE_BLUETOOTH, 0xaa, METHOD_BUFFERED, FILE_ANY_ACCESS)
 #define IOCTL_WINEBTH_RADIO_REMOVE_DEVICE      CTL_CODE(FILE_DEVICE_BLUETOOTH, 0xab, METHOD_BUFFERED, FILE_ANY_ACCESS)
+/* Start scanning for LE advertisements. The scan lasts until it is stopped or the handle is closed. */
+#define IOCTL_WINEBTH_RADIO_START_LE_SCAN      CTL_CODE(FILE_DEVICE_BLUETOOTH, 0xac, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_WINEBTH_RADIO_STOP_LE_SCAN       CTL_CODE(FILE_DEVICE_BLUETOOTH, 0xad, METHOD_BUFFERED, FILE_ANY_ACCESS)
+/* Wait for the next LE advertisement received by a scan started from this handle. */
+#define IOCTL_WINEBTH_RADIO_READ_LE_ADVERTISEMENT CTL_CODE(FILE_DEVICE_BLUETOOTH, 0xae, METHOD_BUFFERED, FILE_ANY_ACCESS)
 
 /* Get all primary GATT services for the LE device. */
 #define IOCTL_WINEBTH_LE_DEVICE_GET_GATT_SERVICES CTL_CODE(FILE_DEVICE_BLUETOOTH, 0xc0, METHOD_BUFFERED, FILE_ANY_ACCESS)
@@ -81,6 +86,18 @@ struct winebth_radio_send_auth_response_params
 struct winebth_radio_start_auth_params
 {
     BTH_ADDR address;
+};
+
+#define WINEBTH_LE_ADVERTISEMENT_MAX_SIZE 1280
+
+struct winebth_radio_le_advertisement
+{
+    BTH_ADDR address;
+    unsigned int random_address : 1;
+    INT16 rssi;
+    /* The advertising and scan response data, as a sequence of advertising data structures. */
+    ULONG data_size;
+    BYTE data[1];
 };
 
 struct winebth_le_device_get_gatt_services_params
